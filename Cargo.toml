@@ -1,0 +1,12 @@
+[package]
+name = "ui_controls"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ui_controls"
+
+[dependencies]
+derive_more = "0.99.18"
+image = "0.25.2"
+xcap = "0.0.10"
