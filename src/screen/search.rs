@@ -60,8 +60,17 @@ mod brute_force {
         let mut source = image::open("__fixtures__/screen-2k.png").unwrap();
         let target = image::open("__fixtures__/btn.png").unwrap();
 
-        let is_found = find_target_bruteforce(&mut source, &target, 0.00);
+        let is_found = find_target_bruteforce(&mut source, &target, 0.0);
         assert_eq!(is_found, Some((1180, 934)));
+    }
+
+    #[test]
+    fn finds_nothing_for_random_image_at_0_looseness() {
+        let mut source  = image::open("__fixtures__/screen-2k.png").unwrap();
+        let target  = image::open("__fixtures__/random-text.png").unwrap();
+
+        let is_found = find_target_bruteforce(&mut source, &target, 0.0);
+        assert_eq!(is_found, None);
     }
 }
 
