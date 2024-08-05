@@ -2,6 +2,10 @@
 name = "ui_controls"
 version = "0.1.0"
 edition = "2021"
+description = "A library for building interactions with UIs from code."
+license = "MIT"
+documentation = "https://docs.rs/ui_controls/"
+repository = "https://github.com/NexRX/ui-controls/"
 
 [lib]
 name = "ui_controls"
