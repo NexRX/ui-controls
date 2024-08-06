@@ -20,10 +20,10 @@ pub trait ScreenControls {
     /// - **looseness** - The percentage of difference allowed between the two pixels based on 255. 0 being no difference and 1 being a perfect match
     fn find_target(
         &self,
-        method: search::SearchAlgorithm,
         target: &DynamicImage,
-    ) -> Option<(u32, u32)> {
-        method.find(&mut self.screenshot(), target)
+        method: search::SearchAlgorithm,
+    ) -> Option<(i32, i32)> {
+        method.find(&mut self.screenshot(), target).ok()?
     }
 
     // fn find_all_targets(&self, target: &DynamicImage, looseness: f32) -> Vec<(u32, u32)>;
