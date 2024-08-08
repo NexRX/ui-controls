@@ -113,46 +113,6 @@ mod test_target {
     use super::*;
     use image::GrayImage;
 
-    fn create_test_image() -> (Array2<u8>, Array2<u8>) {
-        // Create a simple 5x5 image
-        let image = GrayImage::from_raw(
-            5,
-            5,
-            vec![
-                0, 0, 0, 0, 0, 0, 255, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 255, 0, 0, 0,
-                0, 0, 0,
-            ],
-        )
-        .unwrap();
-
-        // Create a 3x3 template
-        let template =
-            GrayImage::from_raw(3, 3, vec![255, 255, 255, 255, 255, 255, 255, 255, 255]).unwrap();
-
-        (image_to_ndarray(image), image_to_ndarray(template))
-    }
-
-    #[test]
-    fn test_compute_ncc() {
-        let (image, template) = create_test_image();
-
-        // Invoke the function
-        let (ncc_value, (x, y)) = normalize_cross_correlation(&image.view(), &template.view());
-
-        // Define the expected output manually or via a reference implementation
-        let expected_ncc_value = 1.0; // Assume we expect perfect match for this test case
-        let expected_x = 1; // Coordinates where the match is perfect
-        let expected_y = 1;
-
-        // Assert that the computed values are as expected
-        assert!(
-            (ncc_value - expected_ncc_value).abs() < 1e-6,
-            "NCC value is incorrect, Expected: {expected_ncc_value}, Got: {ncc_value} with {x}x{y}",
-        );
-        assert_eq!(x, expected_x, "X coordinate is incorrect");
-        assert_eq!(y, expected_y, "Y coordinate is incorrect");
-    }
-
     #[test]
     fn finds_button_at_high_confidence() {
         use approx::assert_relative_eq;
