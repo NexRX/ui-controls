@@ -1,8 +1,8 @@
-mod search;
-
 use derive_more::{Deref, DerefMut};
 use image::DynamicImage;
 use xcap::Monitor;
+
+use crate::matching;
 
 pub trait ScreenControls {
     /// Returns the width and height of the screen.
@@ -21,7 +21,7 @@ pub trait ScreenControls {
     fn find_target(
         &self,
         target: &DynamicImage,
-        method: search::SearchAlgorithm,
+        method: matching::SearchAlgorithm,
     ) -> Option<(i32, i32)> {
         method.find(&mut self.screenshot(), target).ok()?
     }
