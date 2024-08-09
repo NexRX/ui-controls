@@ -1,13 +1,13 @@
 use super::SearchResult;
-use image::{flat::SampleLayout, DynamicImage, GrayImage};
+use image::{flat::SampleLayout, DynamicImage, GrayImage, ImageBuffer, Luma};
 use ndarray::{s, Array2, ArrayView2, ShapeBuilder};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
-type LocatedNCC = (f64, (usize, usize));
+type LocatedNCC = (f32, (usize, usize));
 
 // Helper function to convert image to ndarray array
 // TODO: checkout docs for this: For conversion between ndarray, nalgebra and image check out nshare.
-fn image_to_ndarray(image: GrayImage) -> Array2<u8> {
+fn image_to_ndarray(image: ImageBuffer<Luma<f32>, Vec<f32>>) -> Array2<f32> {
     let SampleLayout {
         height,
         height_stride,
@@ -21,27 +21,26 @@ fn image_to_ndarray(image: GrayImage) -> Array2<u8> {
 }
 
 fn compute_region_ncc(
-    image: &ArrayView2<u8>,
-    template: &ArrayView2<f64>,
-    template_mean: f64,
-    template_std: f64,
+    image: &ArrayView2<f32>,
+    template: &ArrayView2<f32>,
+    template_mean: f32,
+    template_std: f32,
     (x, y): (usize, usize),
 ) -> LocatedNCC {
     let (tw, th) = template.dim();
     let region = image.slice(s![x..x + tw, y..y + th]);
 
     // Convert the region to f32 and compute the mean and standard deviation
-    let region_f32 = region.mapv(|x| x as f64);
-    let region_mean = region_f32.mean().unwrap();
-    let region_std = (region_f32.clone() - region_mean)
-        .mapv(|x| x.powi(2))
+    let region_mean = region.mean().unwrap();
+    let region_std = region
+        .mapv(|x| (x - region_mean).powi(2))
         .mean()
         .unwrap()
         .sqrt();
 
     // Compute the NCC score
-    let numerator = ((region_f32.clone() - region_mean) * (template - template_mean)).sum();
-    let denominator = region_std * template_std * template.len() as f64;
+    let numerator = ((region.mapv(|v| v - region_mean)) * (template - template_mean)).sum();
+    let denominator = region_std * template_std * template.len() as f32;
 
     let ncc = if denominator != 0.0 {
         numerator / denominator
@@ -52,7 +51,7 @@ fn compute_region_ncc(
     (ncc, (x, y))
 }
 
-fn compute_standard_deviation(image: &ArrayView2<f64>, mean: f64) -> f64 {
+fn compute_standard_deviation(image: &ArrayView2<f32>, mean: f32) -> f32 {
     (image - mean).mapv(|x| x.powi(2)).mean().unwrap().sqrt()
 }
 
@@ -64,20 +63,16 @@ fn max_ncc(a: LocatedNCC, b: LocatedNCC) -> LocatedNCC {
 }
 
 fn normalize_cross_correlation(
-    image: &ArrayView2<u8>,
-    template: &ArrayView2<u8>,
-) -> (f64, (usize, usize)) {
+    image: &ArrayView2<f32>,
+    template: &ArrayView2<f32>,
+) -> (f32, (usize, usize)) {
     let (iw, ih) = image.dim();
     let (tw, th) = template.dim();
     assert!(ih > th && iw > tw, "Template dimensions supercede images");
 
-    // Convert the template to f32 and compute the mean and standard deviation
-    let template = template.mapv(|x| x as f64);
-    let template = template.view();
     let template_mean = template.mean().unwrap();
-    let template_std = compute_standard_deviation(&template, template_mean);
+    let template_std = compute_standard_deviation(template, template_mean);
 
-    // Slide the template over the image
     let slide_range = s![0..(iw - tw), 0..(ih - th)];
     let image_slide_bounds = image.slice(slide_range);
 
@@ -89,20 +84,19 @@ fn normalize_cross_correlation(
         })
         .reduce(|| (0.0, (0, 0)), max_ncc);
 
-    // Convert best_score to percentage (0 to 100%)
+
     let best_percentage = (best.0 * 100.0).clamp(0.0, 100.0);
 
     (best_percentage, best.1)
 }
-
 pub fn find_target(
     image: &DynamicImage,
     template: &DynamicImage,
     confidence_threshold: f32,
 ) -> SearchResult {
     let result = normalize_cross_correlation(
-        &image_to_ndarray(image.to_luma8()).view(),
-        &image_to_ndarray(template.to_luma8()).view(),
+        &image_to_ndarray(image.to_luma32f()).view(),
+        &image_to_ndarray(template.to_luma32f()).view(),
     );
 
     Ok(Some((result.1 .0 as i32, result.1 .1 as i32)))
