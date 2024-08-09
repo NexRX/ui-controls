@@ -5,8 +5,10 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 
 type LocatedNCC = (f32, (usize, usize));
 
+
+// TODO: Move to this for speed ups https://docs.rs/ndrustfft/latest/ndrustfft/
+
 // Helper function to convert image to ndarray array
-// TODO: checkout docs for this: For conversion between ndarray, nalgebra and image check out nshare.
 fn image_to_ndarray(image: ImageBuffer<Luma<f32>, Vec<f32>>) -> Array2<f32> {
     let SampleLayout {
         height,
