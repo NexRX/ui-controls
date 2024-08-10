@@ -713,28 +713,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ndarray"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "087ee1ca8a7c22830c2bba4a96ed8e72ce0968ae944349324d52522f66aa3944"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
- "rayon",
-]
-
-[[package]]
 name = "ndrustfft"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88e760e2478e786a5186aa2bfc18d538310482ecb231b67e46543a2ff49bf704"
 dependencies = [
- "ndarray 0.15.6",
+ "ndarray",
  "num-traits",
  "realfft",
  "rustdct",
@@ -935,21 +919,6 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
-]
-
-[[package]]
-name = "portable-atomic"
-version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da544ee218f0d287a911e9c99a39a8c9bc8fcad3cb8db5959940044ecfc67265"
-
-[[package]]
-name = "portable-atomic-util"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcdd8420072e66d54a407b3316991fe946ce3ab1083a7f575b2463866624704d"
-dependencies = [
- "portable-atomic",
 ]
 
 [[package]]
@@ -1477,7 +1446,7 @@ dependencies = [
  "derive_more",
  "image",
  "imageproc",
- "ndarray 0.16.0",
+ "ndarray",
  "ndrustfft",
  "opencv",
  "range_check",

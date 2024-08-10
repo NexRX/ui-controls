@@ -20,7 +20,7 @@ cpu = ["dep:rustfft", "dep:ndarray"]
 derive_more = "0.99.0"
 image = "0.25.2"
 imageproc = { version = "0.25.0", optional = true }
-ndarray = { version = "0.16.0", features = ["rayon"], optional = true }
+ndarray = { version = "0.15.0", features = ["rayon"], optional = true }
 ndrustfft = "0.4.5"
 opencv = { version = "0.92.2", features = [
     "ximgproc",
