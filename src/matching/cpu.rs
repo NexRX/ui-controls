@@ -247,7 +247,7 @@ fn find_target(
     template: &DynamicImage,
     confidence_threshold: f64,
 ) -> Option<(usize, usize)> {
-    let (score, xy) = template_matching(source, template, true);
+    let (score, xy) = template_matching(source, template);
 
     if score < confidence_threshold {
         return None;
