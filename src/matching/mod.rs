@@ -1,9 +1,9 @@
-#[cfg(feature = "opencv")]
-pub(crate) mod opencv;
 #[cfg(feature = "cpu")]
 pub(crate) mod cpu;
 #[cfg(feature = "imageproc")]
 pub mod imageproc;
+#[cfg(feature = "opencv")]
+pub(crate) mod opencv;
 
 use image::{DynamicImage, GenericImageView, Rgba};
 use std::iter::zip;
@@ -32,12 +32,16 @@ pub enum SearchAlgorithm {
     OpenCV(f32),
     #[cfg(feature = "imageproc")]
     ImageProc(f32),
+    #[cfg(feature = "cpu")]
+    CPU,
 }
 
 impl SearchAlgorithm {
     pub fn new_recommended() -> Self {
         #[cfg(feature = "opencv")]
         return SearchAlgorithm::OpenCV(0.9);
+        #[cfg(feature = "cpu")]
+        return SearchAlgorithm::CPU;
         #[cfg(feature = "imageproc")]
         return SearchAlgorithm::ImageProc(0.9);
         #[cfg(not(any(feature = "opencv", feature = "imageproc")))]
@@ -51,6 +55,10 @@ impl SearchAlgorithm {
             }
             #[cfg(feature = "opencv")]
             SearchAlgorithm::OpenCV(confidence) => opencv::find_target(source, target, *confidence),
+            #[cfg(feature = "cpu")]
+            SearchAlgorithm::CPU => Ok(
+                Some(cpu::template_matching(source, target).1).map(|v| (v.0 as i32, v.1 as i32))
+            ),
             #[cfg(feature = "imageproc")]
             SearchAlgorithm::ImageProc(confidence) => {
                 imageproc::find_target(source, target, *confidence)

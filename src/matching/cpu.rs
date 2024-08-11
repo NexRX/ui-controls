@@ -1,7 +1,5 @@
-use image::{DynamicImage, GenericImageView};
-use ndarray::parallel::prelude::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
-};
+use image::DynamicImage;
+use ndarray::parallel::prelude::*;
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::vec;
 
@@ -226,7 +224,7 @@ fn pad_image(
     padded
 }
 
-fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64, (usize, usize)) {
+pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64, (usize, usize)) {
     let (w, h) = (source.width() as usize, source.height() as usize);
 
     // Pad the template image to match the background dimensions
@@ -241,69 +239,6 @@ fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64, (u
     let correlation = ifft2d(cross_spectrum);
     find_peak_correlation(&correlation)
 }
-
-fn find_target(
-    source: &DynamicImage,
-    template: &DynamicImage,
-    confidence_threshold: f64,
-) -> Option<(usize, usize)> {
-    let (score, xy) = template_matching(source, template);
-
-    if score < confidence_threshold {
-        return None;
-    }
-
-    Some(xy)
-}
-
-fn normalize_correlation(
-    correlation: &RawImage<Complex<f64>>,
-    min: f64,
-    max: f64,
-) -> RawImage<f64> {
-    let height = correlation.len();
-    let width = correlation[0].len();
-    let mut result = vec![vec![0.0; width]; height];
-
-    for y in 0..height {
-        for x in 0..width {
-            let value = correlation[y][x].re;
-            result[y][x] = if max != min {
-                (value - min) / (max - min)
-            } else {
-                0.0 // Handle the case where all values are the same
-            };
-        }
-    }
-
-    result
-}
-
-fn find_min_max(correlation: &RawImage<Complex<f64>>) -> (f64, f64) {
-    let mut min = f64::MAX;
-    let mut max = f64::MIN;
-
-    for row in correlation.iter() {
-        for &value in row.iter() {
-            let re = value.re;
-            if re < min {
-                min = re;
-            }
-            if re > max {
-                max = re;
-            }
-        }
-    }
-
-    (min, max)
-}
-
-fn calculate_percentage_score(peak_value: f64) -> f64 {
-    let max_possible_value = 1.0; // Assuming the max correlation value is normalized to 1.0
-    (peak_value / max_possible_value)
-}
-
-// TODO: Add a normalize option so we can give a percentage threshold to determine if the correlation is good enough.
 
 #[cfg(test)]
 mod tests {
