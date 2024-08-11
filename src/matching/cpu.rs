@@ -178,6 +178,24 @@ fn compute_cross_spectrum(
     result
 }
 
+fn cross_correlation(
+    ga_fft: &[Vec<Complex<f64>>],
+    gb_fft: &[Vec<Complex<f64>>],
+) -> Vec<Vec<Complex<f64>>> {
+    let rows = ga_fft.len();
+    let cols = ga_fft[0].len();
+
+    let mut result = vec![vec![Complex::zero(); cols]; rows];
+
+    for i in 0..rows {
+        for j in 0..cols {
+            result[i][j] = ga_fft[i][j] * gb_fft[i][j].conj();
+        }
+    }
+
+    result
+}
+
 fn max_fft(a: (f64, (usize, usize)), b: (f64, (usize, usize))) -> (f64, (usize, usize)) {
     if a.0 > b.0 {
         a
@@ -187,14 +205,14 @@ fn max_fft(a: (f64, (usize, usize)), b: (f64, (usize, usize))) -> (f64, (usize, 
 }
 
 // Function to find the peak correlation
-fn find_peak_correlation<T>(correlation: &RawImage<T>) -> (f64, (usize, usize))
-where
-    T: ToReal<f64> + Copy,
-{
+fn find_peak_correlation(
+    correlation: &RawImage<Complex<f64>>,
+    normalized: bool,
+) -> (f64, (usize, usize)) {
     let height = correlation.len();
     let width = correlation[0].len();
 
-    (0..height)
+    let peak = (0..height)
         .map(|y| {
             (0..width)
                 .map(move |x| (correlation[y][x].to_real(), (x, y)))
@@ -202,7 +220,32 @@ where
         })
         .map(|v| v.unwrap_or_default())
         .reduce(max_fft)
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if normalized == false {
+        return peak;
+    }
+
+    let max = correlation
+        .par_iter()
+        .map(|row| {
+            row.par_iter()
+                .map(|v| v.re)
+                .reduce(|| 0f64, |a, b| a.max(b))
+        })
+        .reduce(|| 0f64, |a, b| a.max(b));
+
+    let min = correlation
+        .par_iter()
+        .map(|row| {
+            row.par_iter()
+                .map(|v| v.re)
+                .reduce(|| 0f64, |a, b| a.max(b))
+        })
+        .reduce(|| 0f64, |a, b| a.min(b));
+
+    let peak_norm = (peak.0 - min) / (max - min);
+    (peak_norm, peak.1)
 }
 
 fn pad_image(
@@ -234,10 +277,10 @@ pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64
     let ga = fft2d(source);
     let gb = fft2d(template);
 
-    let cross_spectrum = compute_cross_spectrum(&ga, &gb);
+    let cc = compute_cross_spectrum(&ga, &gb);
 
-    let correlation = ifft2d(cross_spectrum);
-    find_peak_correlation(&correlation)
+    let correlation = ifft2d(cc);
+    find_peak_correlation(&correlation, true)
 }
 
 #[cfg(test)]
@@ -252,8 +295,8 @@ mod tests {
         let template = image::open("__fixtures__/btn.png").unwrap();
 
         let (score, (x, y)) = template_matching(&source, &template);
-        assert_relative_eq!(score, 1., max_relative = 0.0017);
         assert_relative_eq!(x as f32, 1180f32, max_relative = 0.0017);
+        assert_relative_eq!(score, 1., max_relative = 0.0017);
         assert_relative_eq!(y as f32, 934f32, max_relative = 0.0017);
     }
 }
