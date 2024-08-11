@@ -11,7 +11,7 @@ repository = "https://github.com/NexRX/ui-controls/"
 name = "ui_controls"
 
 [features]
-default = ["cpu", "opencv"]
+default = ["cpu"]
 opencv = ["dep:opencv"]
 imageproc = ["dep:imageproc"]
 cpu = ["dep:rustfft", "dep:ndarray"]
