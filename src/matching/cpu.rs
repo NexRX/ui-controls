@@ -1,5 +1,4 @@
 use image::DynamicImage;
-use ndarray::parallel::prelude::*;
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::vec;
 

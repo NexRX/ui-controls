@@ -98,6 +98,6 @@ criterion_group!(
     bench_template_match_with_gpu,
     bench_template_match_with_gpu_accelerated,
     bench_template_match_with_gpu2,
-    bench_template_match_with_opencv,
+    // bench_template_match_with_opencv,
 );
 criterion_main!(benches);
