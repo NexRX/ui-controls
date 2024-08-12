@@ -22,12 +22,7 @@ fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     let mut planner = FftPlanner::new();
     let fft_row = planner.plan_fft_forward(width);
     let fft_col = planner.plan_fft_forward(height);
-    
-    // Apply FFT to each row in parallel
-    image.par_iter_rows_mut().for_each(|row| {
-        fft_row.process(row);
-    });
-    
+
     // Transpose the image for column FFTs (rows/height and cols/width are flipped for easier and better processing)
     let mut transposed_image: Matrix<Complex<f64>> = Matrix::new_zeros(width, height);
 
@@ -40,10 +35,24 @@ fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
             }
         });
 
-    // Apply FFT to each transposed row (original column) in parallel
-    transposed_image.par_iter_rows_mut().for_each(|row| {
-        fft_col.process(row);
-    });
+    // Apply FFT to each row in parallel
+    let fn_row = move || {
+        image.par_iter_rows_mut().for_each(|row| {
+            fft_row.process(row);
+        });
+        image
+    };
+
+    let fn_col = || {
+        // Apply FFT to each transposed row (original column) in parallel
+        transposed_image.par_iter_rows_mut().for_each(|row| {
+            fft_col.process(row);
+        });
+
+        transposed_image
+    };
+
+    let (mut image, transposed_image) = rayon::join(fn_row, fn_col);
 
     // Transpose back to the original layout
     image.par_enumerate_rows_mut().for_each(|(i, row)| {
@@ -63,11 +72,6 @@ fn ifft2d(mut frequency_domain: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     let ifft_row = planner.plan_fft_inverse(width);
     let ifft_col = planner.plan_fft_inverse(height);
 
-    // Apply inverse FFT to each row in parallel
-    frequency_domain.par_iter_rows_mut().for_each(|row| {
-        ifft_row.process(row);
-    });
-
     // Transpose the result for column FFTs
     let mut transposed_result: Vec<Vec<Complex<f64>>> = vec![vec![Complex::zero(); height]; width];
 
@@ -80,10 +84,23 @@ fn ifft2d(mut frequency_domain: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
             }
         });
 
+    // Apply inverse FFT to each row in parallel
+    let fn_row = || {
+        frequency_domain.par_iter_rows_mut().for_each(|row| {
+            ifft_row.process(row);
+        });
+        frequency_domain
+    };
+
     // Apply inverse FFT to each transposed row (original column) in parallel
-    transposed_result.par_iter_mut().for_each(|row| {
-        ifft_col.process(row);
-    });
+    let fn_col = || {
+        transposed_result.par_iter_mut().for_each(|row| {
+            ifft_col.process(row);
+        });
+        transposed_result
+    };
+
+    let (mut frequency_domain, transposed_result) = rayon::join(fn_row, fn_col);
 
     // Transpose back to the original layout
     frequency_domain
