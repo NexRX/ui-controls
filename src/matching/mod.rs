@@ -26,14 +26,14 @@ impl From<::opencv::Error> for SearchError {
 
 #[derive(Debug, Clone, Copy)]
 pub enum SearchAlgorithm {
-    /// Brute force search algorithm with a specified **confidence** *(1.0 == strict match - 0.0 == anything)* for matching.
-    BruteForce(f32),
     #[cfg(feature = "opencv")]
     OpenCV(f32),
-    #[cfg(feature = "imageproc")]
-    ImageProc(f32),
     #[cfg(feature = "cpu")]
     CPU,
+    #[cfg(feature = "imageproc")]
+    ImageProc(f32),
+    /// Brute force search algorithm with a specified **confidence** *(1.0 == strict match - 0.0 == anything)* for matching.
+    BruteForce(f32),
 }
 
 impl SearchAlgorithm {
