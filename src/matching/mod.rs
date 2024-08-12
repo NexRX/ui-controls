@@ -1,9 +1,9 @@
 #[cfg(feature = "cpu")]
-pub(crate) mod cpu;
-#[cfg(feature = "imageproc")]
-pub mod imageproc;
+pub mod cpu;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 #[cfg(feature = "opencv")]
-pub(crate) mod opencv;
+pub mod opencv;
 
 use image::{DynamicImage, GenericImageView, Rgba};
 use std::iter::zip;
@@ -30,8 +30,6 @@ pub enum SearchAlgorithm {
     OpenCV(f32),
     #[cfg(feature = "cpu")]
     CPU,
-    #[cfg(feature = "imageproc")]
-    ImageProc(f32),
     /// Brute force search algorithm with a specified **confidence** *(1.0 == strict match - 0.0 == anything)* for matching.
     BruteForce(f32),
 }
@@ -42,8 +40,6 @@ impl SearchAlgorithm {
         return SearchAlgorithm::OpenCV(0.9);
         #[cfg(feature = "cpu")]
         return SearchAlgorithm::CPU;
-        #[cfg(feature = "imageproc")]
-        return SearchAlgorithm::ImageProc(0.9);
         #[cfg(not(any(feature = "opencv", feature = "imageproc")))]
         SearchAlgorithm::BruteForce(1.0)
     }
@@ -59,10 +55,6 @@ impl SearchAlgorithm {
             SearchAlgorithm::CPU => Ok(
                 Some(cpu::template_matching(source, target).1).map(|v| (v.0 as i32, v.1 as i32))
             ),
-            #[cfg(feature = "imageproc")]
-            SearchAlgorithm::ImageProc(confidence) => {
-                imageproc::find_target(source, target, *confidence)
-            }
         }
     }
 }

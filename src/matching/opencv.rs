@@ -1,4 +1,3 @@
-
 use image::{DynamicImage, GenericImageView};
 use opencv::core::{min_max_loc, no_array, Point, Scalar, CV_32FC1, CV_8UC3};
 use opencv::imgproc::{self, match_template};
@@ -24,25 +23,17 @@ fn dynamic_image_to_mat(img: &DynamicImage) -> opencv::Result<Mat> {
     Ok(mat)
 }
 
-pub fn find_target(
-    haystack_img: &DynamicImage,
-    needle_img: &DynamicImage,
-    confidence_threshold: f32,
-) -> SearchResult {
-    // Convert images to OpenCV Mat
-    let haystack = dynamic_image_to_mat(haystack_img)?;
-    let needle = dynamic_image_to_mat(needle_img)?;
-
+fn template_matching(source: &Mat, template: &Mat) -> opencv::Result<(f64, (i32, i32))> {
     // Create result matrix for template matching using new_rows_cols_with_default
-    let result_cols = haystack.cols() - needle.cols() + 1;
-    let result_rows = haystack.rows() - needle.rows() + 1;
+    let result_cols = source.cols() - template.cols() + 1;
+    let result_rows = source.rows() - template.rows() + 1;
     let mut result =
         Mat::new_rows_cols_with_default(result_rows, result_cols, CV_32FC1, Scalar::all(0.0))?;
 
     // Perform template matching
     match_template(
-        &haystack,
-        &needle,
+        &source,
+        &template,
         &mut result,
         imgproc::TM_CCOEFF_NORMED,
         &no_array(),
@@ -62,26 +53,59 @@ pub fn find_target(
         &no_array(),
     )?;
 
-    // Check if the max value is above the confidence threshold
-    if max_val >= confidence_threshold as f64 {
-        return Ok(Some((max_loc.x, max_loc.y)));
-    }
+    Ok((max_val, (max_loc.x, max_loc.y)))
+}
 
+pub fn find_target(
+    source: &DynamicImage,
+    template: &DynamicImage,
+    confidence_threshold: f32,
+) -> SearchResult {
+    // Convert images to OpenCV Mat
+    let source = dynamic_image_to_mat(source)?;
+    let template = dynamic_image_to_mat(template)?;
+
+    let result = template_matching(&source, &template)?;
+
+    if result.0 >= confidence_threshold as f64 {
+        return Ok(Some(result.1));
+    }
     Ok(None)
 }
 
 #[cfg(test)]
-#[test]
-fn finds_button_at_high_confidence() {
-    use approx::assert_relative_eq;
+mod tests {
+    use super::*;
 
-    let source = image::open("__fixtures__/screen-2k.png").unwrap();
-    let target = image::open("__fixtures__/btn.png").unwrap();
+    #[test]
+    fn find_button_on_screen() {
+        use approx::assert_relative_eq;
 
-    let (x, y) = find_target(&source, &target, 0.99999)
-        .expect("An error occured")
-        .expect("No cordinates found");
+        let source = image::open("__fixtures__/screen-2k.png").unwrap();
+        let template = image::open("__fixtures__/btn.png").unwrap();
+        let source = dynamic_image_to_mat(&source).unwrap();
+        let template = dynamic_image_to_mat(&template).unwrap();
 
-    assert_relative_eq!(x as f32, 1180f32, max_relative = 0.0017);
-    assert_relative_eq!(y as f32, 934f32, max_relative = 0.0017);
+        let time = std::time::Instant::now();
+        let (_score, (x, y)) = template_matching(&source, &template).expect("An error occured");
+        println!("{:?}", time.elapsed());
+        assert_relative_eq!(x as f32, 1180f32, max_relative = 0.0017);
+        assert_relative_eq!(y as f32, 934f32, max_relative = 0.0017);
+    }
+
+    #[test]
+    fn finds_button_at_high_confidence() {
+        use approx::assert_relative_eq;
+
+        let source = image::open("__fixtures__/screen-2k.png").unwrap();
+        let target = image::open("__fixtures__/btn.png").unwrap();
+
+        let time = std::time::Instant::now();
+        let (x, y) = find_target(&source, &target, 0.99999)
+            .expect("An error occured")
+            .expect("No cordinates found");
+        println!("{:?}", time.elapsed());
+        assert_relative_eq!(x as f32, 1180f32, max_relative = 0.0017);
+        assert_relative_eq!(y as f32, 934f32, max_relative = 0.0017);
+    }
 }

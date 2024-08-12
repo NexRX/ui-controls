@@ -10,9 +10,9 @@ use crate::types::matrix::Matrix;
 // TODO: Look into the following for a potential speedup:
 //In most cases, even prime-sized FFTs will be fast enough for your application. In the example of 5183 above, even that “slow” FFT only takes a few tens of microseconds to compute.
 // https://docs.rs/rustfft/latest/rustfft/
-// Some applications of the FFT allow for choosing an arbitrary FFT size (In many applications the size is pre-determined by whatever you’re computing). 
-// If your application supports choosing your own size, our advice is still to start by trying the size that’s most convenient to your application. 
-// If that’s too slow, see if you can find a nearby size whose prime factors are all 11 or smaller, 
+// Some applications of the FFT allow for choosing an arbitrary FFT size (In many applications the size is pre-determined by whatever you’re computing).
+// If your application supports choosing your own size, our advice is still to start by trying the size that’s most convenient to your application.
+// If that’s too slow, see if you can find a nearby size whose prime factors are all 11 or smaller,
 //                    \/-----------\/
 //and you can expect a 2x-5x speedup. If that’s still too slow, find a nearby size whose prime factors are all 2 or 3, and you can expect a 1.1x-1.5x speedup.
 
@@ -22,12 +22,12 @@ fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     let mut planner = FftPlanner::new();
     let fft_row = planner.plan_fft_forward(width);
     let fft_col = planner.plan_fft_forward(height);
-
+    
     // Apply FFT to each row in parallel
     image.par_iter_rows_mut().for_each(|row| {
         fft_row.process(row);
     });
-
+    
     // Transpose the image for column FFTs (rows/height and cols/width are flipped for easier and better processing)
     let mut transposed_image: Matrix<Complex<f64>> = Matrix::new_zeros(width, height);
 
@@ -216,8 +216,10 @@ pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64
     let source = image_to_complex_matrix(source);
     let template = pad_image(&image_to_complex_matrix(template), w, h);
 
-    let ga = fft2d(source);
-    let gb = fft2d(template);
+    let fn_ga = || fft2d(source);
+    let fn_gb = || fft2d(template);
+
+    let (ga, gb) = rayon::join(fn_ga, fn_gb);
 
     let cc = compute_cross_spectrum(&ga, &gb);
 
@@ -242,5 +244,18 @@ mod tests {
         assert_relative_eq!(x as f32, 1180f32, max_relative = 0.0017);
         assert_relative_eq!(score, 1., max_relative = 0.0017);
         assert_relative_eq!(y as f32, 934f32, max_relative = 0.0017);
+    }
+
+    #[test]
+    fn find_btn_on_screen_pow2() {
+        let source = image::open("__fixtures__/screen-pow2.png").unwrap();
+        let template = image::open("__fixtures__/gb-pow2-btn.png").unwrap();
+
+        let time = std::time::Instant::now();
+        let (score, (x, y)) = template_matching(&source, &template);
+        println!("{:?}", time.elapsed());
+        assert_relative_eq!(x as f32, 1608f32, max_relative = 0.0017);
+        assert_relative_eq!(score, 1., max_relative = 0.0017);
+        assert_relative_eq!(y as f32, 714f32, max_relative = 0.0017);
     }
 }

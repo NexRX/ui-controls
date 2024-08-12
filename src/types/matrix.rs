@@ -101,6 +101,20 @@ impl<T> Matrix<T> {
     // fn iter_cols_mut(&mut self) -> impl Iterator<Item = &mut [T]> {
     //     self.data.iter().step_by(step)
     // }
+
+    pub fn into_transpose(self) -> Self
+    where
+        T: Copy + Zero,
+    {
+        let mut data = vec![T::zero(); self.rows * self.cols];
+        transpose::transpose(&self.data, &mut data, self.cols, self.rows);
+        Self {
+            data,
+            rows: self.cols,
+            cols: self.rows
+        }
+        
+    }
 }
 
 impl<T: Send + Sync> Matrix<T> {
