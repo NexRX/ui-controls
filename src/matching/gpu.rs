@@ -1,19 +1,37 @@
 use image::DynamicImage;
-use template_matching::{find_extremes, MatchTemplateMethod, TemplateMatcher};
 
-pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f32, (u32, u32)) {
+
+
+pub fn accelerated_template_matching(source: &DynamicImage, template: &DynamicImage) -> (f32, (u32, u32)) {
     // Or alternatively you can create the matcher first
-    let mut matcher = TemplateMatcher::new();
+    let mut matcher = template_matching::TemplateMatcher::new();
     matcher.match_template(
         &source.to_luma32f(),
         &template.to_luma32f(),
-        MatchTemplateMethod::SumOfSquaredDifferences,
+        template_matching::MatchTemplateMethod::SumOfSquaredDifferences,
     );
 
     let result = matcher.wait_for_result().unwrap();
 
     // Calculate min & max values
-    let extremes = find_extremes(&result);
+    let extremes = template_matching::find_extremes(&result);
+
+    (extremes.max_value, extremes.max_value_location)
+}
+
+pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f32, (u32, u32)) {
+    // Or alternatively you can create the matcher first
+    let mut matcher = template_matching::TemplateMatcher::new();
+    matcher.match_template(
+        &source.to_luma32f(),
+        &template.to_luma32f(),
+        template_matching::MatchTemplateMethod::SumOfSquaredDifferences,
+    );
+
+    let result = matcher.wait_for_result().unwrap();
+
+    // Calculate min & max values
+    let extremes = template_matching::find_extremes(&result);
 
     (extremes.max_value, extremes.max_value_location)
 }

@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from scipy import fftpack
 from PIL import Image
 from io import BytesIO
+import time
 
 def load_and_convert_image(file_path):
     img = Image.open(file_path).convert('L')
@@ -18,6 +19,7 @@ template_url = '__fixtures__/btn.png'
 template = load_and_convert_image(template_url)
 background = load_and_convert_image(background_url)
 
+start_time = time.time()
 # Get image dimensions
 bx, by = background.shape[1], background.shape[0]
 tx, ty = template.shape[1], template.shape[0]
@@ -32,8 +34,10 @@ c = np.real(fftpack.ifft2(cross_spectrum))
 max_c = np.max(np.abs(c))
 ypeak, xpeak = np.unravel_index(np.argmax(c), c.shape)
 
+elapsed_time = time.time() - start_time
+
 # Print the location of the peak
-print(f"Peak correlation location: (x, y) = ({xpeak}, {ypeak})")
+print(f"Peak correlation location: (x, y) = ({xpeak}, {ypeak}) in {elapsed_time}s")
 
 # Create a single figure with four subplots
 fig, axs = plt.subplots(2, 2, figsize=(12, 12))

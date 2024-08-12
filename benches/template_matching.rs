@@ -32,6 +32,36 @@ pub fn bench_template_match_with_gpu(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(feature = "gpu")]
+pub fn bench_template_match_with_gpu_accelerated(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Template Match (GPU Accelerated) ");
+    for (source, templ) in IMAGE_PATHS.into_iter() {
+        let name = format!("Source: '{source}' & Template: '{templ}'");
+        let source = image::open(source).unwrap();
+        let template = image::open(templ).unwrap();
+
+        group.bench_function(&name, |b| {
+            b.iter(|| gpu::accelerated_template_matching(&source, &template))
+        });
+    }
+    group.finish();
+}
+
+#[cfg(feature = "gpu")]
+pub fn bench_template_match_with_gpu2(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Template Match (GPU2) ");
+    for (source, templ) in IMAGE_PATHS.into_iter() {
+        let name = format!("Source: '{source}' & Template: '{templ}'");
+        let source = image::open(source).unwrap().to_luma8();
+        let template = image::open(templ).unwrap().to_luma8();
+
+        group.bench_function(&name, |b| {
+            b.iter(|| gpu2::match_template(&source, &template))
+        });
+    }
+    group.finish();
+}
+
 #[cfg(feature = "opencv")]
 pub fn bench_template_match_with_opencv(c: &mut Criterion) {
     let mut group = c.benchmark_group("Template Match (OpenCV) ");
@@ -66,6 +96,8 @@ criterion_group!(
     benches,
     bench_template_match_with_cpu,
     bench_template_match_with_gpu,
+    bench_template_match_with_gpu_accelerated,
+    bench_template_match_with_gpu2,
     bench_template_match_with_opencv,
 );
 criterion_main!(benches);
