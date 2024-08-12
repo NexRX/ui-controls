@@ -1,7 +1,7 @@
 use image::DynamicImage;
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::vec;
-
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use crate::types::matrix::Matrix;
 
 // TODO: Clean up
