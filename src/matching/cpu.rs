@@ -7,6 +7,14 @@ use crate::types::matrix::Matrix;
 
 // TODO: Clean up
 // TODO: Implement alternative to NCC using Sum of Squared Differences (SSD)
+// TODO: Look into the following for a potential speedup:
+//In most cases, even prime-sized FFTs will be fast enough for your application. In the example of 5183 above, even that “slow” FFT only takes a few tens of microseconds to compute.
+// https://docs.rs/rustfft/latest/rustfft/
+// Some applications of the FFT allow for choosing an arbitrary FFT size (In many applications the size is pre-determined by whatever you’re computing). 
+// If your application supports choosing your own size, our advice is still to start by trying the size that’s most convenient to your application. 
+// If that’s too slow, see if you can find a nearby size whose prime factors are all 11 or smaller, 
+//                    \/-----------\/
+//and you can expect a 2x-5x speedup. If that’s still too slow, find a nearby size whose prime factors are all 2 or 3, and you can expect a 1.1x-1.5x speedup.
 
 fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     let (height, width) = image.dims();
