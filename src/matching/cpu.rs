@@ -5,6 +5,9 @@ use std::vec;
 
 type RawImage<T = f32> = Vec<Vec<T>>;
 
+// TODO: Clean up
+// TODO: Implement alternative to NCC using Sum of Squared Differences (SSD)
+
 trait ImageVec<T> {
     fn into_complex(self) -> RawImage<Complex<T>>;
 
