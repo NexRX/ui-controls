@@ -11,21 +11,19 @@ repository = "https://github.com/NexRX/ui-controls/"
 name = "ui_controls"
 
 [features]
-default = ["cpu", "gpu", "opencv", "imageproc"]
+default = ["cpu", "gpu"]
 opencv = ["dep:opencv"]
-imageproc = ["dep:imageproc"]
 cpu = ["dep:rustfft", "dep:ndarray"]
 gpu = ["dep:template-matching"]
 
 [dependencies]
 derive_more = "0.99.0"
 image = "0.24"
-imageproc = { version = "0.25.0", optional = true }
 ndarray = { version = "0.15.0", features = ["rayon"], optional = true }
 ndrustfft = "0.4.5"
 opencv = { version = "0.92.2", features = [
     "ximgproc",
-    "clang-runtime",
+    "clang-runtime"
 ], optional = true }
 rayon = "1.10.0"
 rustfft = { version = "6.2.0", optional = true }
