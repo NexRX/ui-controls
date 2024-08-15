@@ -1,8 +1,10 @@
+use crate::types::matrix::{Matrix, MatrixImage, MatrixImageC};
 use image::DynamicImage;
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
+};
 use rustfft::{num_complex::Complex, num_traits::Zero, FftPlanner};
 use std::vec;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
-use crate::types::matrix::Matrix;
 
 // TODO: Clean up
 // TODO: Implement alternative to NCC using Sum of Squared Differences (SSD)
@@ -15,7 +17,7 @@ use crate::types::matrix::Matrix;
 //                    \/-----------\/
 //and you can expect a 2x-5x speedup. If that’s still too slow, find a nearby size whose prime factors are all 2 or 3, and you can expect a 1.1x-1.5x speedup.
 
-fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
+fn fft2d(mut image: MatrixImageC) -> MatrixImageC {
     let (height, width) = image.dims();
 
     let mut planner = FftPlanner::new();
@@ -23,7 +25,7 @@ fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     let fft_col = planner.plan_fft_forward(height);
 
     // Transpose the image for column FFTs (rows/height and cols/width are flipped for easier and better processing)
-    let mut transposed_image: Matrix<Complex<f64>> = Matrix::new_zeros(width, height);
+    let mut transposed_image: MatrixImageC = Matrix::new_zeros(width, height);
 
     // Transpose the image so that columns become rows
     transposed_image
@@ -64,7 +66,7 @@ fn fft2d(mut image: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
 }
 
 /// Computes the inverse 2D FFT of a 2D Vec.
-fn ifft2d(mut frequency_domain: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
+fn ifft2d(mut frequency_domain: MatrixImageC) -> MatrixImageC {
     let (height, width) = frequency_domain.dims();
 
     let mut planner = FftPlanner::new();
@@ -121,27 +123,7 @@ fn ifft2d(mut frequency_domain: Matrix<Complex<f64>>) -> Matrix<Complex<f64>> {
     frequency_domain
 }
 
-/// Convert an image to a 2D vector of Complex numbers (grayscale values).
-fn image_to_complex_matrix(image: &DynamicImage) -> Matrix<Complex<f64>> {
-    let image = image.to_luma8();
-    let (width, height) = image.dimensions();
-
-    let mut result = Matrix::<Complex<f64>>::new_zeros(height as usize, width as usize);
-
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = image.get_pixel(x, y).0[0] as f64;
-            result[(y as usize, x as usize)] = Complex::new(pixel, 0.0);
-        }
-    }
-
-    result
-}
-
-fn compute_cross_spectrum(
-    ga: &Matrix<Complex<f64>>,
-    gb: &Matrix<Complex<f64>>,
-) -> Matrix<Complex<f64>> {
+fn compute_cross_spectrum(ga: &MatrixImageC, gb: &MatrixImageC) -> MatrixImageC {
     let (height, width) = ga.dims();
     let mut result = Matrix::new_zeros(height, width);
 
@@ -170,10 +152,7 @@ fn max_fft(a: (f64, (usize, usize)), b: (f64, (usize, usize))) -> (f64, (usize, 
 }
 
 // Function to find the peak correlation
-fn find_peak_correlation(
-    correlation: &Matrix<Complex<f64>>,
-    normalized: bool,
-) -> (f64, (usize, usize)) {
+fn find_peak_correlation(correlation: &MatrixImageC, normalized: bool) -> (f64, (usize, usize)) {
     let (height, width) = correlation.dims();
 
     let peak = (0..height)
@@ -212,7 +191,7 @@ fn find_peak_correlation(
     (peak_norm, peak.1)
 }
 
-fn pad_image(image: &Matrix<Complex<f64>>, width: usize, height: usize) -> Matrix<Complex<f64>> {
+fn pad_image(image: &MatrixImageC, width: usize, height: usize) -> MatrixImageC {
     let mut padded = Matrix::new_zeros(height, width);
     let (og_height, og_width) = image.dims();
 
@@ -229,8 +208,8 @@ pub fn template_matching(source: &DynamicImage, template: &DynamicImage) -> (f64
     let (w, h) = (source.width() as usize, source.height() as usize);
 
     // Pad the template image to match the background dimensions
-    let source = image_to_complex_matrix(source);
-    let template = pad_image(&image_to_complex_matrix(template), w, h);
+    let source = MatrixImage::from(source).into_complex();
+    let template = pad_image(&MatrixImage::from(template).into_complex(), w, h);
 
     let fn_ga = || fft2d(source);
     let fn_gb = || fft2d(template);

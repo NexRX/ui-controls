@@ -1,5 +1,6 @@
 use derive_more as d;
-use ndrustfft::Zero;
+use image::{DynamicImage, GenericImageView, ImageResult};
+use ndrustfft::{Complex, Zero};
 use rayon::iter::{
     Enumerate, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
     IntoParallelRefMutIterator, ParallelIterator,
@@ -9,6 +10,10 @@ use std::{
     ops::*,
     slice::{Iter, IterMut},
 };
+
+pub type MatrixImage = Matrix<f64>;
+pub type MatrixImage32 = Matrix<f32>;
+pub type MatrixImageC = Matrix<Complex<f64>>;
 
 #[derive(d::AsRef, d::AsMut, Debug, Clone, PartialEq, d::From, d::Into)]
 #[from(forward)]
@@ -53,6 +58,14 @@ impl<T> Matrix<T> {
         }
     }
 
+    pub fn new_raw(rows: usize, cols: usize, data: Vec<T>) -> Matrix<T> {
+        Matrix { data, rows, cols }
+    }
+
+    pub fn into_raw(self) -> Vec<T> {
+        self.data
+    }
+
     pub fn rows(&self) -> usize {
         self.rows
     }
@@ -61,8 +74,22 @@ impl<T> Matrix<T> {
         self.cols
     }
 
+    /// Returns the dimensions of this matrix as a tuple of (rows, cols) or in the context of images (height, width).
     pub fn dims(&self) -> (usize, usize) {
         (self.rows(), self.cols())
+    }
+
+    /// Panics on casting usize to u32, best use dims unless your casting anyway
+    pub fn dims_u32(&self) -> (u32, u32) {
+        (self.rows() as u32, self.cols() as u32)
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     // Get the element at (row, col)
@@ -81,6 +108,20 @@ impl<T> Matrix<T> {
         } else {
             None
         }
+    }
+
+    /// Used for GPU buffer purposes. Contents of a buffer on creation. Executes `bytemuck::cast_slice`
+    pub fn cast_slice(&self) -> &[u8]
+    where
+        T: bytemuck::Pod,
+    {
+        bytemuck::cast_slice(&self.data)
+    }
+
+    pub fn enumerate_element(&self) -> impl Iterator<Item = ((usize, usize), &T)> {
+        (0..self.rows()).flat_map(move |row| {
+            (0..self.cols()).map(move |col| ((row, col), &self.data[row * self.cols + col]))
+        })
     }
 
     // Iterate over rows
@@ -111,9 +152,98 @@ impl<T> Matrix<T> {
         Self {
             data,
             rows: self.cols,
-            cols: self.rows
+            cols: self.rows,
         }
-        
+    }
+
+    pub fn into_complex(self) -> Matrix<Complex<T>>
+    where
+        T: Copy + Zero,
+    {
+        let (rows, cols) = self.dims();
+        let data = self
+            .data
+            .into_iter()
+            .map(|v| Complex::new(v, T::zero()))
+            .collect::<Vec<Complex<T>>>();
+        Matrix::<Complex<T>> { data, rows, cols }
+    }
+
+    #[cfg(test)]
+    pub fn save_to_file<P: AsRef<std::path::Path>>(&self, file_path: P)
+    where
+        T: std::fmt::Display,
+    {
+        use std::fs;
+        use std::io::Write;
+
+        // Extract the parent directory from the file path
+        if let Some(parent_dir) = file_path.as_ref().parent() {
+            // Create the parent directory and any necessary subdirectories
+            fs::create_dir_all(parent_dir).expect("Failed to create parent dirs");
+        }
+
+        // Create the file
+        let mut file = fs::File::create(file_path).expect("Failed to open file");
+
+        for row in self.iter_rows() {
+            let line = row
+                .iter()
+                .map(|v| v.to_string())
+                .reduce(|a, b| format!("{a} {b}"))
+                .expect("Missing elements");
+            writeln!(&mut file, "{line}").expect("Failed to write to file");
+        }
+    }
+}
+
+impl From<DynamicImage> for Matrix<f32> {
+    fn from(value: DynamicImage) -> Self {
+        let (cols, rows) = value.dimensions();
+        let size = value.to_luma32f().len();
+        let data: Vec<f32> = value.to_luma32f().to_vec();
+        assert_eq!(size, data.len());
+        assert_eq!(data.len(), (cols * rows) as usize);
+        Self::new_raw(rows as usize, cols as usize, data)
+    }
+}
+
+impl From<&DynamicImage> for Matrix<f32> {
+    fn from(value: &DynamicImage) -> Self {
+        let (cols, rows) = value.dimensions();
+        let data: Vec<f32> = value.to_luma_alpha32f().to_vec();
+        Self::new_raw(rows as usize, cols as usize, data)
+    }
+}
+
+impl From<DynamicImage> for Matrix<f64> {
+    fn from(value: DynamicImage) -> Self {
+        Matrix::<f32>::from(value).into_f64()
+    }
+}
+
+impl From<&DynamicImage> for Matrix<f64> {
+    fn from(value: &DynamicImage) -> Self {
+        Matrix::<f32>::from(value).into_f64()
+    }
+}
+
+impl Matrix<f32> {
+    pub fn open_image(image_path: &str) -> ImageResult<Self> {
+        let image = image::open(image_path)?;
+        Ok(Self::from(image))
+    }
+
+    pub fn into_f64(self) -> Matrix<f64> {
+        let (rows, cols) = self.dims();
+        let data: Vec<f64> = self.into_raw().into_iter().map(|v| v as f64).collect();
+        Matrix::<f64>::new_raw(rows, cols, data)
+    }
+}
+
+impl Matrix<f64> {
+    pub fn open_image(image_path: &str) -> ImageResult<Self> {
+        Matrix::<f32>::open_image(image_path).map(|v| v.into_f64())
     }
 }
 
