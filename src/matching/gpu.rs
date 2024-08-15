@@ -69,7 +69,8 @@ impl GPUInit<'_> {
 pub async fn template_matching(
     source: &DynamicImage,
     template: &DynamicImage,
-    // gpu_init: GPUInit,
+    // TODO: confidence_threshold: f32,
+    // TODO: gpu_init: GPUInit,
 ) -> ((usize, usize), f32) {
     let source = MatrixImage32::from(source);
     let kernel = MatrixImage32::from(template);
@@ -77,9 +78,7 @@ pub async fn template_matching(
     let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
 
     let data = execute_shader(&device, &queue, &source, &kernel);
-    let result = find_best_ssd(&data);
-
-    // TODO: Add confidence threshold
+    let result = find_best_ssd(&data, Some(kernel.len() as f32));
 
     #[allow(clippy::let_and_return)]
     result
@@ -254,7 +253,8 @@ fn create_binding_group(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::Bind
 }
 
 /// Returns the  X,Y cordinates or in otherwords the Column,Row of the best match detirmined by SSD
-fn find_best_ssd(data: &MatrixImage32) -> ((usize, usize), f32) {
+/// If you want a percentage based score, give the Kernal length which should be equal to `kernel.rows() * source.cols()`. Otherwise, give none for just the raw score.
+fn find_best_ssd(data: &MatrixImage32, kernel_len: Option<f32>) -> ((usize, usize), f32) {
     let ((y, x), score) = data
         .enumerate_element()
         .reduce(|a, b| {
@@ -265,7 +265,16 @@ fn find_best_ssd(data: &MatrixImage32) -> ((usize, usize), f32) {
         })
         .unwrap();
 
-    ((x, y), *score)
+    let score = match kernel_len {
+        Some(kernel_len) => {
+            let max = kernel_len * f32::MAX;
+            let normalized_score = if *score != 0. { score / max } else { 0. };
+            normalized_score * 100.
+        }
+        None => *score,
+    };
+
+    ((x, y), score)
 }
 
 #[cfg(test)]
@@ -298,7 +307,7 @@ mod tests {
 
         let results = execute_shader(&device, &queue, &source, &kernel);
 
-        let (cords, score) = super::find_best_ssd(&results);
+        let (cords, score) = super::find_best_ssd(&results, Some(kernel.len() as f32));
         assert_eq!(cords, (1, 1), "The button should be at the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: {results:#?}");
 
         let last_col: f32 = results.iter_cols().last().unwrap().sum();
@@ -317,8 +326,13 @@ mod tests {
 
         let results = execute_shader(&device, &queue, &source, &kernel);
         results.save_to_file("target/matrix.txt");
-        let (cords, score) = super::find_best_ssd(&results);
+        let (cords, score) = super::find_best_ssd(&results, Some(kernel.len() as f32));
         assert_eq!(cords, (1180, 934), "The button should be at the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: <Too Large>");
+
+        let max = kernel.rows() as f32 * kernel.cols() as f32 * f32::MAX;
+        let normalized_score = if score != 0. { score / max } else { 0. };
+        let percentage = 1. - normalized_score * 100.;
+        assert_eq!(percentage, 1.)
 
         // let last_col: f32 = results.iter_cols().last().unwrap().sum();
         // assert_eq!(last_col, 0., "There should be zero sum in last column because it would be out of bounds. Raw Results: <Too Large>");
