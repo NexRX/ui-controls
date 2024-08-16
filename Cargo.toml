@@ -49,3 +49,7 @@ tokio = { version = "1.39", features = ["rt", "macros"] }
 name = "template_matching"
 harness = false
 required-features = ["cpu", "gpu"]
+
+# Flamegraph - Don't commit this
+# [profile.release]
+# debug = true

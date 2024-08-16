@@ -28,6 +28,7 @@ fn main(@builtin(global_invocation_id) global: vec3<u32>) {
         for (var tcol = 0u; tcol < param.kernel_width; tcol = tcol + 1u) {
             let source_index = source_row + tcol;
             let kernel_index = kernel_row + tcol;
+
             sum += squared_diff(source[source_index], kernel[kernel_index]);
         }
     }

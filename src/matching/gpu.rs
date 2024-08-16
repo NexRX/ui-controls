@@ -41,15 +41,17 @@ struct GPUTemplateMatchState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: wgpu::Adapter,
-    shader_module: ShaderModule,
-    // pipeline: wgpu::ComputePipeline,
+    shader: ShaderModule,
+    bind_group_layout: wgpu::BindGroupLayout,
+    limits: wgpu::Limits,
+    pipeline: wgpu::ComputePipeline,
 }
 
 impl GPUTemplateMatchState {
-    const SHADER_MODULE: ShaderModuleDescriptor<'static> =
+    const SHADER_DESCRIPTOR: ShaderModuleDescriptor<'static> =
         wgpu::include_wgsl!("../shaders/template_matching.wgsl");
 
-    async fn new_defaults(source: &MatrixImage32, kernel: &MatrixImage32) -> Self {
+    async fn new_defaults() -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -63,11 +65,13 @@ impl GPUTemplateMatchState {
             .await
             .unwrap();
 
+        let limits = adapter.limits();
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     #[cfg(not(target_arch = "wasm32"))]
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits: limits.clone(),
                     #[cfg(target_arch = "wasm32")]
                     required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
                     ..Default::default()
@@ -77,21 +81,54 @@ impl GPUTemplateMatchState {
             .await
             .unwrap();
 
-        let shader_module = device.create_shader_module(Self::SHADER_MODULE);
+        let shader = device.create_shader_module(Self::SHADER_DESCRIPTOR);
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bind Group Layout"),
+            entries: &[
+                create_binding_group(0, wgpu::BufferBindingType::Storage { read_only: true }),
+                create_binding_group(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                create_binding_group(2, wgpu::BufferBindingType::Storage { read_only: false }),
+                create_binding_group(3, wgpu::BufferBindingType::Uniform),
+            ],
+        });
+
+        let pipeline = Self::create_pipeline(&device, &shader, &bind_group_layout);
 
         Self {
             device,
             queue,
             adapter,
-            shader_module,
+            shader,
+            bind_group_layout,
+            limits,
+            pipeline,
         }
     }
 
-    pub fn create_pipeline(
-        &self,
-        source: &MatrixImage32,
-        kernel: &MatrixImage32,
-    ) -> (wgpu::ComputePipeline, wgpu::BindGroup, wgpu::Buffer) {
+    fn create_pipeline(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::ComputePipeline {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Pipeline Layout"),
+            bind_group_layouts: &[bind_group_layout], // Ensure this matches the layout used in the BindGroup
+            push_constant_ranges: &[],
+        });
+
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Computer Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+            cache: None,
+        })
+    }
+
+    fn execute_shader(&self, source: &MatrixImage32, kernel: &MatrixImage32) -> MatrixImage32 {
+        // Setup Buffers
         let source_buf =
             create_matrix_buffer("Source", &self.device, BufferUsages::STORAGE, source);
         let kernel_buf =
@@ -113,33 +150,10 @@ impl GPUTemplateMatchState {
 
         let params_buf = Params::new(source_width, source_height, kernel_width, kernel_height)
             .into_buffer(&self.device);
-
-        // Instantiates the bind group, once again specifying the binding of buffers.
-        let bind_group_layout =
-            &self
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bind Group Layout"),
-                    entries: &[
-                        create_binding_group(
-                            0,
-                            wgpu::BufferBindingType::Storage { read_only: true },
-                        ),
-                        create_binding_group(
-                            1,
-                            wgpu::BufferBindingType::Storage { read_only: true },
-                        ),
-                        create_binding_group(
-                            2,
-                            wgpu::BufferBindingType::Storage { read_only: false },
-                        ),
-                        create_binding_group(3, wgpu::BufferBindingType::Uniform),
-                    ],
-                });
-
+        
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Binding Groups"),
-            layout: bind_group_layout,
+            layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -160,27 +174,59 @@ impl GPUTemplateMatchState {
             ],
         });
 
-        // Create the pipeline layout using the bind group layout
-        let pipeline_layout = self
+        let mut encoder = self
             .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Pipeline Layout"),
-                bind_group_layouts: &[bind_group_layout], // Ensure this matches the layout used in the BindGroup
-                push_constant_ranges: &[],
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Command Encoder"),
             });
 
-        let compute_pipeline =
-            self.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("Computer Pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &self.shader_module,
-                    entry_point: "main",
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
+        let (source_height, source_width) = source.dims_u32();
+        {
+            const WG_SIZE_XY: u32 = 16;
+            let workgroups_x = (source_width + WG_SIZE_XY - 1) / WG_SIZE_XY;
+            let workgroups_y = (source_height + WG_SIZE_XY - 1) / WG_SIZE_XY;
 
-        (compute_pipeline, bind_group, output_buf)
+            // Create a compute pass and dispatch the compute shader
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Compute Pass"),
+                ..Default::default()
+            });
+
+            compute_pass.set_pipeline(&self.pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+        // Copy output buffer to a staging buffer for reading
+        let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Buffer"),
+            size: source.size() as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, source.size() as u64);
+        // Submit the command buffer to the queue
+        self.queue.submit(Some(encoder.finish()));
+
+        // Block until the GPU completes the operations and map the buffer synchronously
+        staging_buf
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |result| {
+                result.expect("Failed to map result in stagging buffer");
+            });
+
+        let time = std::time::Instant::now();
+        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        println!("{:#?} - device.poll", time.elapsed());
+
+        // Read the data
+        let data = staging_buf.slice(..).get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+
+        // Unmap the buffer
+        drop(data);
+        staging_buf.unmap();
+
+        MatrixImage32::new_raw(source_height as usize, source_width as usize, result)
     }
 }
 
@@ -202,68 +248,6 @@ pub async fn template_matching(
 
     // #[allow(clippy::let_and_return)]
     // result
-}
-
-fn execute_shader(
-    gpu: &GPUTemplateMatchState,
-    source: &MatrixImage32,
-    kernel: &MatrixImage32,
-) -> MatrixImage32 {
-    let (compute_pipeline, bind_group, output_buf) = gpu.create_pipeline(source, kernel);
-
-    let mut encoder = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Command Encoder"),
-        });
-
-    let (source_height, source_width) = source.dims_u32();
-    {
-        const WG_SIZE_XY: u32 = 16;
-        let workgroups_x = (source_width + WG_SIZE_XY - 1) / WG_SIZE_XY;
-        let workgroups_y = (source_height + WG_SIZE_XY - 1) / WG_SIZE_XY;
-
-        // Create a compute pass and dispatch the compute shader
-        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("Compute Pass"),
-            ..Default::default()
-        });
-
-        compute_pass.set_pipeline(&compute_pipeline);
-        compute_pass.set_bind_group(0, &bind_group, &[]);
-        compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-    }
-
-    // Copy output buffer to a staging buffer for reading
-    let staging_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Staging Buffer"),
-        size: source.size() as u64,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, source.size() as u64);
-
-    // Submit the command buffer to the queue
-    gpu.queue.submit(Some(encoder.finish()));
-
-    // Block until the GPU completes the operations and map the buffer synchronously
-    staging_buf
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, |result| {
-            result.expect("Failed to map result in stagging buffer");
-        });
-    gpu.device.poll(wgpu::Maintain::Wait);
-
-    // Read the data
-    let data = staging_buf.slice(..).get_mapped_range();
-    let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-
-    // Unmap the buffer
-    drop(data);
-    staging_buf.unmap();
-
-    MatrixImage32::new_raw(source_height as usize, source_width as usize, result)
 }
 
 fn create_matrix_buffer(
@@ -319,7 +303,6 @@ fn find_best_ssd(data: &MatrixImage32, kernel_len: Option<f32>) -> ((usize, usiz
 
 #[cfg(test)]
 mod tests {
-    use super::execute_shader;
     use crate::{matching::gpu::GPUTemplateMatchState, types::matrix::MatrixImage32};
 
     #[tokio::test]
@@ -344,9 +327,9 @@ mod tests {
         );
 
         //  let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
-        let gpu = GPUTemplateMatchState::new_defaults(&source, &kernel).await;
+        let gpu = GPUTemplateMatchState::new_defaults().await;
 
-        let results = execute_shader(&gpu, &source, &kernel);
+        let results = gpu.execute_shader(&source, &kernel);
 
         let (cords, score) = super::find_best_ssd(&results, Some(kernel.len() as f32));
         assert_eq!(cords, (1, 1), "The button should be near the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: {results:#?}");
@@ -358,10 +341,18 @@ mod tests {
         let kernel = MatrixImage32::open_image("__fixtures__/btn.png").unwrap();
 
         // let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
-        let gpu = GPUTemplateMatchState::new_defaults(&source, &kernel).await;
+        let gpu = GPUTemplateMatchState::new_defaults().await;
 
         let time = std::time::Instant::now();
-        let results = execute_shader(&gpu, &source, &kernel);
+        let results = gpu.execute_shader(&source, &kernel);
+        println!("Elapsed: {:?}", time.elapsed());
+
+        let time = std::time::Instant::now();
+        let results = gpu.execute_shader(&source, &kernel);
+        println!("Elapsed: {:?}", time.elapsed());
+
+        let time = std::time::Instant::now();
+        let results = gpu.execute_shader(&source, &kernel);
         println!("Elapsed: {:?}", time.elapsed());
 
         // results.save_to_file("target/matrix.txt");
