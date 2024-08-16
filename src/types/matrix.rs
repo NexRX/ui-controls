@@ -87,6 +87,11 @@ impl<T> Matrix<T> {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+    
+    // Gives the current number of bytes used by the matrix
+    pub fn size(&self) -> usize {
+        self.len() * std::mem::size_of::<T>()
+    }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0

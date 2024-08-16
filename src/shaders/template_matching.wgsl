@@ -1,8 +1,8 @@
 struct Params {
-    source_height: u32,
     source_width: u32,
-    kernel_height: u32,
-    kernel_width: u32
+    source_height: u32,
+    kernel_width: u32,
+    kernel_height: u32
 }
 
 @group(0) @binding(0) var<storage, read> source: array<f32>;

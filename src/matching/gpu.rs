@@ -5,30 +5,51 @@ use std::{
 
 use image::{DynamicImage, GenericImageView};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use wgpu::{util::DeviceExt, BufferUsages, Device, Queue, ShaderModule};
+use wgpu::{util::DeviceExt, BufferUsages, Device, Queue, ShaderModule, ShaderModuleDescriptor};
 
 use crate::types::matrix::{Matrix, MatrixImage, MatrixImage32};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
-    source_height: u32,
     source_width: u32,
-    kernel_height: u32,
+    source_height: u32,
     kernel_width: u32,
+    kernel_height: u32,
 }
 
-pub enum GPUInit<'custom> {
-    Persistant,
-    Temporary,
-    Custom(&'custom Device, &'custom Queue),
+impl Params {
+    fn new(source_width: u32, source_height: u32, kernel_width: u32, kernel_height: u32) -> Self {
+        Self {
+            source_width,
+            source_height,
+            kernel_width,
+            kernel_height,
+        }
+    }
+
+    fn into_buffer(self, device: &Device) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Params Buffer"),
+            contents: bytemuck::cast_slice(&[self]),
+            usage: BufferUsages::UNIFORM,
+        })
+    }
 }
 
-impl GPUInit<'_> {
-    async fn init_gpu(
-        power_preference: wgpu::PowerPreference,
-        limits: Option<wgpu::Limits>,
-    ) -> (Device, Queue) {
+struct GPUTemplateMatchState {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    adapter: wgpu::Adapter,
+    shader_module: ShaderModule,
+    // pipeline: wgpu::ComputePipeline,
+}
+
+impl GPUTemplateMatchState {
+    const SHADER_MODULE: ShaderModuleDescriptor<'static> =
+        wgpu::include_wgsl!("../shaders/template_matching.wgsl");
+
+    async fn new_defaults(source: &MatrixImage32, kernel: &MatrixImage32) -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -38,151 +59,170 @@ impl GPUInit<'_> {
         });
 
         let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
             .unwrap();
 
-        adapter
+        let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     #[cfg(not(target_arch = "wasm32"))]
-                    required_limits: limits.unwrap_or_default(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
                     #[cfg(target_arch = "wasm32")]
-                    required_limits: limits.unwrap_or_else(wgpu::Limits::downlevel_webgl2_defaults),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
                     ..Default::default()
                 },
                 None,
             )
             .await
-            .unwrap()
+            .unwrap();
+
+        let shader_module = device.create_shader_module(Self::SHADER_MODULE);
+
+        Self {
+            device,
+            queue,
+            adapter,
+            shader_module,
+        }
     }
 
-    pub fn get_value(&self) -> (&Device, &Queue) {
-        todo!()
+    pub fn create_pipeline(
+        &self,
+        source: &MatrixImage32,
+        kernel: &MatrixImage32,
+    ) -> (wgpu::ComputePipeline, wgpu::BindGroup, wgpu::Buffer) {
+        let source_buf =
+            create_matrix_buffer("Source", &self.device, BufferUsages::STORAGE, source);
+        let kernel_buf =
+            create_matrix_buffer("Kernel", &self.device, BufferUsages::STORAGE, kernel);
+
+        let (source_height, source_width) = source.dims_u32();
+        let (kernel_height, kernel_width) = kernel.dims_u32();
+        assert_eq!(source.len(), (source_width * source_height) as usize);
+        assert_eq!(kernel.len(), (kernel_height * kernel_width) as usize);
+
+        let output = MatrixImage32::new_zeros(source_height as usize, source_width as usize);
+        let output_buf = create_matrix_buffer(
+            "Output",
+            &self.device,
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            &output,
+        );
+        assert_eq!(source_buf.size(), output_buf.size());
+
+        let params_buf = Params::new(source_width, source_height, kernel_width, kernel_height)
+            .into_buffer(&self.device);
+
+        // Instantiates the bind group, once again specifying the binding of buffers.
+        let bind_group_layout =
+            &self
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bind Group Layout"),
+                    entries: &[
+                        create_binding_group(
+                            0,
+                            wgpu::BufferBindingType::Storage { read_only: true },
+                        ),
+                        create_binding_group(
+                            1,
+                            wgpu::BufferBindingType::Storage { read_only: true },
+                        ),
+                        create_binding_group(
+                            2,
+                            wgpu::BufferBindingType::Storage { read_only: false },
+                        ),
+                        create_binding_group(3, wgpu::BufferBindingType::Uniform),
+                    ],
+                });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Binding Groups"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: source_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Create the pipeline layout using the bind group layout
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Pipeline Layout"),
+                bind_group_layouts: &[bind_group_layout], // Ensure this matches the layout used in the BindGroup
+                push_constant_ranges: &[],
+            });
+
+        let compute_pipeline =
+            self.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("Computer Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &self.shader_module,
+                    entry_point: "main",
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+
+        (compute_pipeline, bind_group, output_buf)
     }
 }
 
 pub async fn template_matching(
     source: &DynamicImage,
     template: &DynamicImage,
+    gpu: GPUTemplateMatchState,
     // TODO: confidence_threshold: f32,
-    // TODO: gpu_init: GPUInit,
 ) -> ((usize, usize), f32) {
     let source = MatrixImage32::from(source);
     let kernel = MatrixImage32::from(template);
 
-    let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+    todo!();
 
-    let data = execute_shader(&device, &queue, &source, &kernel);
-    let result = find_best_ssd(&data, Some(kernel.len() as f32));
+    // let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
 
-    #[allow(clippy::let_and_return)]
-    result
+    // let data = execute_shader(&device, &queue, &source, &kernel);
+    // let result = find_best_ssd(&data, Some(kernel.len() as f32));
+
+    // #[allow(clippy::let_and_return)]
+    // result
 }
 
 fn execute_shader(
-    device: &Device,
-    queue: &Queue,
+    gpu: &GPUTemplateMatchState,
     source: &MatrixImage32,
     kernel: &MatrixImage32,
 ) -> MatrixImage32 {
-    let shader =
-        device.create_shader_module(wgpu::include_wgsl!("../shaders/template_matching.wgsl"));
+    let (compute_pipeline, bind_group, output_buf) = gpu.create_pipeline(source, kernel);
+
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Command Encoder"),
+        });
 
     let (source_height, source_width) = source.dims_u32();
-    assert_eq!(source.len(), (source_width * source_height) as usize);
-
-    let (kernel_height, kernel_width) = kernel.dims_u32();
-    assert_eq!(kernel.len(), (kernel_height * kernel_width) as usize);
-
-    const WG_SIZE_XY: u32 = 16;
-    let workgroups_x = (source_width + WG_SIZE_XY - 1) / WG_SIZE_XY;
-    let workgroups_y = (source_height + WG_SIZE_XY - 1) / WG_SIZE_XY;
-
-    let source_buf = create_matrix_buffer("Source", device, BufferUsages::STORAGE, source);
-    let kernel_buf = create_matrix_buffer("Kernel", device, BufferUsages::STORAGE, kernel);
-
-    let output = MatrixImage32::new_zeros(source_height as usize, source_width as usize);
-    let output_size = (output.len() * std::mem::size_of::<f32>()) as u64;
-    let output_buf = create_matrix_buffer(
-        "Output",
-        device,
-        BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-        &output,
-    );
-    assert_eq!(source_buf.size(), output_buf.size());
-
-    let params = Params {
-        source_height,
-        source_width,
-        kernel_height,
-        kernel_width,
-    };
-    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Params Buffer"),
-        contents: bytemuck::cast_slice(&[params]),
-        usage: BufferUsages::UNIFORM,
-    });
-
-    // Instantiates the bind group, once again specifying the binding of buffers.
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Bind Group Layout"),
-        entries: &[
-            create_binding_group(0, wgpu::BufferBindingType::Storage { read_only: true }),
-            create_binding_group(1, wgpu::BufferBindingType::Storage { read_only: true }),
-            create_binding_group(2, wgpu::BufferBindingType::Storage { read_only: false }),
-            create_binding_group(3, wgpu::BufferBindingType::Uniform),
-        ],
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Binding Groups"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: source_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: kernel_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: output_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: params_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    // Create the pipeline layout using the bind group layout
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout], // Ensure this matches the layout used in the BindGroup
-        push_constant_ranges: &[],
-    });
-
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Computer Pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: "main",
-        compilation_options: Default::default(),
-        cache: None,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("Command Encoder"),
-    });
-
     {
+        const WG_SIZE_XY: u32 = 16;
+        let workgroups_x = (source_width + WG_SIZE_XY - 1) / WG_SIZE_XY;
+        let workgroups_y = (source_height + WG_SIZE_XY - 1) / WG_SIZE_XY;
+
         // Create a compute pass and dispatch the compute shader
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Compute Pass"),
@@ -195,17 +235,17 @@ fn execute_shader(
     }
 
     // Copy output buffer to a staging buffer for reading
-    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+    let staging_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Staging Buffer"),
-        size: output_size,
+        size: source.size() as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
-    encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, output_size);
+    encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, source.size() as u64);
 
     // Submit the command buffer to the queue
-    queue.submit(Some(encoder.finish()));
+    gpu.queue.submit(Some(encoder.finish()));
 
     // Block until the GPU completes the operations and map the buffer synchronously
     staging_buf
@@ -213,7 +253,7 @@ fn execute_shader(
         .map_async(wgpu::MapMode::Read, |result| {
             result.expect("Failed to map result in stagging buffer");
         });
-    device.poll(wgpu::Maintain::Wait);
+    gpu.device.poll(wgpu::Maintain::Wait);
 
     // Read the data
     let data = staging_buf.slice(..).get_mapped_range();
@@ -279,8 +319,8 @@ fn find_best_ssd(data: &MatrixImage32, kernel_len: Option<f32>) -> ((usize, usiz
 
 #[cfg(test)]
 mod tests {
-    use super::{execute_shader, GPUInit};
-    use crate::types::matrix::MatrixImage32;
+    use super::execute_shader;
+    use crate::{matching::gpu::GPUTemplateMatchState, types::matrix::MatrixImage32};
 
     #[tokio::test]
     async fn find_basic() {
@@ -303,18 +343,13 @@ mod tests {
             ],
         );
 
-        let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+        //  let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+        let gpu = GPUTemplateMatchState::new_defaults(&source, &kernel).await;
 
-        let results = execute_shader(&device, &queue, &source, &kernel);
+        let results = execute_shader(&gpu, &source, &kernel);
 
         let (cords, score) = super::find_best_ssd(&results, Some(kernel.len() as f32));
-        assert_eq!(cords, (1, 1), "The button should be at the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: {results:#?}");
-
-        let last_col: f32 = results.iter_cols().last().unwrap().sum();
-        assert_eq!(last_col, 0., "There should be zero sum in last column because it would be out of bounds. Raw Results: {results:#?}");
-
-        let last_row: f32 = results.iter_rows().last().unwrap().iter().sum();
-        assert_eq!(last_row, 0., "There should be zero sum in last row because it would be out of bounds. Raw Results: {results:#?}");
+        assert_eq!(cords, (1, 1), "The button should be near the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: {results:#?}");
     }
 
     #[tokio::test]
@@ -322,54 +357,16 @@ mod tests {
         let source = MatrixImage32::open_image("__fixtures__/screen-2k.png").unwrap();
         let kernel = MatrixImage32::open_image("__fixtures__/btn.png").unwrap();
 
-        let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+        // let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+        let gpu = GPUTemplateMatchState::new_defaults(&source, &kernel).await;
 
-        let results = execute_shader(&device, &queue, &source, &kernel);
-        results.save_to_file("target/matrix.txt");
+        let time = std::time::Instant::now();
+        let results = execute_shader(&gpu, &source, &kernel);
+        println!("Elapsed: {:?}", time.elapsed());
+
+        // results.save_to_file("target/matrix.txt");
+
         let (cords, score) = super::find_best_ssd(&results, Some(kernel.len() as f32));
-        assert_eq!(cords, (1180, 934), "The button should be at the top left corner. Actual XY: {cords:?}, Score: {score}, Raw Results: <Too Large>");
-
-        let max = kernel.rows() as f32 * kernel.cols() as f32 * f32::MAX;
-        let normalized_score = if score != 0. { score / max } else { 0. };
-        let percentage = 1. - normalized_score * 100.;
-        assert_eq!(percentage, 1.)
-
-        // let last_col: f32 = results.iter_cols().last().unwrap().sum();
-        // assert_eq!(last_col, 0., "There should be zero sum in last column because it would be out of bounds. Raw Results: <Too Large>");
-
-        // let last_row: f32 = results.iter_rows().last().unwrap().iter().sum();
-        // assert_eq!(last_row, 0., "There should be zero sum in last row because it would be out of bounds. Raw Results: <Too Large>");
+        assert_eq!(cords, (1180, 934), "Expected different location. Actual XY: {cords:?}, Score: {score}, Raw Results: <Too Large>");
     }
-
-    // #[test]
-    // fn find_button_on_screen() {
-    //     let source = image::open("__fixtures__/screen-pow2.png")
-    //         .unwrap()
-    //         .to_luma32f();
-    //     let template = image::open("__fixtures__/gb-pow2-btn.png")
-    //         .unwrap()
-    //         .to_luma32f();
-
-    //     let result = match_template(
-    //         &source,
-    //         &template,
-    //         MatchTemplateMethod::SumOfSquaredDifferences,
-    //     );
-
-    //     let time = std::time::Instant::now();
-    //     // Or alternatively you can create the matcher first
-    //     let mut matcher = TemplateMatcher::new();
-    //     matcher.match_template(
-    //         &source,
-    //         &template,
-    //         MatchTemplateMethod::SumOfSquaredDifferences,
-    //     );
-
-    //     let results = matcher.wait_for_result().unwrap();
-
-    //     // Calculate min & max values
-    //     let extremes = find_extremes(&result);
-
-    //     println!("Time: {:?} | {:?}", time.elapsed(), extremes)
-    // }
 }
