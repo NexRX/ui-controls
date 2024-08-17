@@ -15,7 +15,7 @@ fn squared_diff(a: f32, b: f32) -> f32 {
     return diff * diff;
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(42, 24, 1)
 fn main(@builtin(global_invocation_id) global: vec3<u32>) {
     let x = global.x;
     let y = global.y;
