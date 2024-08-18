@@ -10,11 +10,6 @@ struct Params {
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 @group(0) @binding(3) var<uniform> param: Params;
 
-fn squared_diff(a: f32, b: f32) -> f32 {
-    let diff = a - b;
-    return diff * diff;
-}
-
 const WG_SIZE_X: u32 = 42;
 const WG_SIZE_Y: u32 = 24;
 
@@ -35,7 +30,8 @@ fn main(@builtin(global_invocation_id) global: vec3<u32>) {
             let source_index = source_row + tcol;
             let kernel_index = kernel_row + tcol;
 
-            sum += squared_diff(source[source_index], kernel[kernel_index]);
+            let diff = source[source_index] - kernel[kernel_index];
+            sum += diff * diff;
         }
     }
 
