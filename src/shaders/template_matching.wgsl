@@ -19,7 +19,6 @@ fn main(@builtin(global_invocation_id) global: vec3<u32>) {
     let y = global.y;
 
     var sum: f32 = 0.;
-
     let base_source_row = y * param.source_width + x;
     
     for (var trow = 0u; trow < param.kernel_height; trow = trow + 1u) {
