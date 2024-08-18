@@ -37,16 +37,25 @@ enum BufferInit<'a> {
     Empty(wgpu::BufferAddress),
 }
 
+enum StoreType {
+    Read,
+    Write,
+    Stage,
+}
+
 impl BufferInit<'_> {
     pub fn into_storage_buffer(
         self,
         device: &wgpu::Device,
         name: &str,
-        writeable: bool,
+        ty: StoreType,
     ) -> wgpu::Buffer {
-        let usage = match writeable {
-            true => BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            false => BufferUsages::STORAGE,
+        let usage = match ty {
+            StoreType::Write => {
+                BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC
+            }
+            StoreType::Read => BufferUsages::STORAGE,
+            StoreType::Stage => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         };
         match self {
             BufferInit::Data(matrix) => {
@@ -103,6 +112,7 @@ pub struct GPUTemplateMatcher {
     kernel_buf: wgpu::Buffer,
     output_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
+    staged_buf: wgpu::Buffer,
     has_mapped: bool,
     pipeline: wgpu::ComputePipeline,
 }
@@ -204,9 +214,11 @@ impl GPUTemplateMatcher {
 
         let pipeline = Self::create_pipeline(&device, &shader);
 
-        let source_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Source", true);
-        let kernel_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Kernel", true);
-        let output_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Output", true);
+        use StoreType::*;
+        let source_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Source", Write);
+        let kernel_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Kernel", Write);
+        let output_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Output", Write);
+        let staged_buf = BufferInit::Empty(1).into_storage_buffer(&device, "Staged", Stage);
         let params_buf = Params::default().into_buffer(&device);
 
         let bind_group =
@@ -223,6 +235,7 @@ impl GPUTemplateMatcher {
             kernel_buf,
             output_buf,
             params_buf,
+            staged_buf,
             has_mapped: false,
             pipeline,
         }
@@ -253,23 +266,32 @@ impl GPUTemplateMatcher {
     }
 
     /// Writes all the data to buffers and recreates them if the size have changed
+    /// TODO: To make this a little more flexible, we should add a option for resizing the buffers.
+    /// I.e., some enum for ResizeBuffer::WhenNeeded, ResizeBuffer::Always (Smaller or larger), ResizeBuffer::AfterNSmallerFrames(u16), ResizeBuffer::Static(u64) (Always the same size, regardless)
     fn write_to_buffers(&mut self, source: &MatrixImage32, kernel: &MatrixImage32) {
+        use StoreType::*;
         let is_source_resize = self.source_buf.size() != source.size() as u64;
         let is_kernel_resize = self.kernel_buf.size() != kernel.size() as u64;
 
         if is_source_resize {
             if self.has_mapped {
                 self.source_buf.unmap();
-                self.kernel_buf.unmap();
+                self.output_buf.unmap();
+                // self.staged_buf.unmap();
             }
             self.source_buf =
-                BufferInit::Data(source).into_storage_buffer(&self.device, "Source", true);
+                BufferInit::Data(source).into_storage_buffer(&self.device, "Source", Write);
             self.output_buf = BufferInit::Empty(source.size() as u64).into_storage_buffer(
                 &self.device,
                 "Output",
-                true,
+                Write,
             );
-            debug!("Source and output buffers resized/recreated");
+            self.staged_buf = BufferInit::Empty(source.size() as u64).into_storage_buffer(
+                &self.device,
+                "Staged",
+                Stage,
+            );
+            debug!("Source, output and staged buffers resized/recreated");
         } else {
             self.queue
                 .write_buffer(&self.source_buf, 0, source.cast_slice());
@@ -281,7 +303,7 @@ impl GPUTemplateMatcher {
                 self.kernel_buf.unmap();
             }
             self.kernel_buf =
-                BufferInit::Data(kernel).into_storage_buffer(&self.device, "Kernel", true);
+                BufferInit::Data(kernel).into_storage_buffer(&self.device, "Kernel", Write);
             debug!("Kernel buffer resized/recreated");
         } else {
             self.queue
@@ -326,7 +348,7 @@ impl GPUTemplateMatcher {
 
         let (source_height, source_width) = source.dims_u32();
         {
-            // NOTE: This is optimized for a 16:9 aspect ratio.
+            // NOTE: This is optimized for a 16:9 aspect ratio with a limit of 1024 WG Invocations
             const WG_SIZE_X: u32 = 42;
             const WG_SIZE_Y: u32 = 24;
             let workgroups_x = (source_width + WG_SIZE_X - 1) / WG_SIZE_X;
@@ -345,18 +367,17 @@ impl GPUTemplateMatcher {
         }
 
         trace!("Coping output buffer to a staging buffer for reading");
-        // TODO: Consider saving the staging buffer.
-        let staging_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Buffer"),
-            size: source.size() as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        encoder.copy_buffer_to_buffer(&self.output_buf, 0, &staging_buf, 0, source.size() as u64);
+        encoder.copy_buffer_to_buffer(
+            &self.output_buf,
+            0,
+            &self.staged_buf,
+            0,
+            source.size() as u64,
+        );
 
         trace!("Submitting the command buffer to the queue");
         self.queue.submit(Some(encoder.finish()));
-        staging_buf
+        self.staged_buf
             .slice(..)
             .map_async(wgpu::MapMode::Read, |result| {
                 result.expect("Failed to map result in stagging buffer");
@@ -370,10 +391,12 @@ impl GPUTemplateMatcher {
             "Unblock from GPU operations after {:#?}, Reading results from staging buffer",
             time.elapsed()
         );
-        let data = staging_buf.slice(..).get_mapped_range();
-        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        let result: Vec<f32> = {
+            let data = self.staged_buf.slice(..).get_mapped_range(); // Buffer view must be dropped unmapping staged buffer
+            bytemuck::cast_slice(&data).to_vec()
+        };
 
-        // staging_buf.unmap();
+        self.staged_buf.unmap();
 
         MatrixImage32::new_raw(source_height as usize, source_width as usize, result)
     }
