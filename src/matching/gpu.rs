@@ -13,6 +13,9 @@ struct Params {
     kernel_height: u32,
 }
 
+// TODO: This is about as optimized as we are reasonibly gonna get without design changes.
+// Try and see if a OpenCL implementation could be faster and worth it.
+
 impl Params {
     fn new(source_width: u32, source_height: u32, kernel_width: u32, kernel_height: u32) -> Self {
         Self {
