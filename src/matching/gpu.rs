@@ -180,7 +180,7 @@ impl GPUTemplateMatcher {
             ],
         };
 
-    async fn new_defaults() -> Self {
+    pub async fn new_defaults() -> Self {
         trace!("Creating GPU Template Matcher with defaults");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
@@ -339,7 +339,7 @@ impl GPUTemplateMatcher {
         self.has_mapped = true;
     }
 
-    fn execute_shader(&mut self, source: &MatrixImage32, kernel: &MatrixImage32) -> MatrixImage32 {
+    pub fn execute_shader(&mut self, source: &MatrixImage32, kernel: &MatrixImage32) -> MatrixImage32 {
         trace!("Executing template matching shader");
         self.write_to_buffers(source, kernel);
 

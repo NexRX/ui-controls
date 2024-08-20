@@ -87,7 +87,7 @@ impl<T> Matrix<T> {
     pub fn len(&self) -> usize {
         self.data.len()
     }
-    
+
     // Gives the current number of bytes used by the matrix
     pub fn size(&self) -> usize {
         self.len() * std::mem::size_of::<T>()
@@ -126,6 +126,14 @@ impl<T> Matrix<T> {
     pub fn enumerate_element(&self) -> impl Iterator<Item = ((usize, usize), &T)> {
         (0..self.rows()).flat_map(move |row| {
             (0..self.cols()).map(move |col| ((row, col), &self.data[row * self.cols + col]))
+        })
+    }
+
+    pub fn enumerate_element_mut(&mut self) -> impl Iterator<Item = ((usize, usize), &mut T)> {
+        self.data.iter_mut().enumerate().map(|(i, e)| {
+            let row = i / self.cols;
+            let col = i % self.cols;
+            ((row, col), e)
         })
     }
 
@@ -273,6 +281,14 @@ impl<T: Send + Sync> Matrix<T> {
         self.data.par_chunks_mut(self.cols).enumerate()
     }
 
+    pub fn par_enumerate_element_mut(&mut self) -> impl ParallelIterator<Item = ((usize, usize), &mut T)>{
+        self.data.par_iter_mut().enumerate().map(|(i, e)| {
+            let row = i / self.cols;
+            let col = i % self.cols;
+            ((row, col), e)
+        })
+    }
+
     // pub fn par_iter_cols_mut(
     //     &mut self,
     // ) -> impl ParallelIterator<Item = impl ParallelIterator<Item = &mut T>> {
@@ -302,6 +318,16 @@ impl<T> Index<(usize, usize)> for Matrix<T> {
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
         let (row, col) = index;
+        assert!(
+            row < self.rows,
+            "The given row {row} exceeds that last row of {}",
+            self.rows - 1
+        );
+        assert!(
+            col < self.cols,
+            "The given col {col} exceeds that last col of {}",
+            self.cols - 1
+        );
         &self.data[row * self.cols + col]
     }
 }
@@ -420,5 +446,43 @@ where
 {
     fn as_parallel_slice_mut(&mut self) -> &mut [T] {
         self.data.as_parallel_slice_mut()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn iter_over_rows() {
+        let matrix = Matrix::<u8>::new_zeros(100, 110);
+
+        let mut count = 0;
+        matrix.iter_rows().for_each(|_| count += 1);
+
+        assert_eq!(100, count);
+    }
+
+    #[test]
+    fn iter_over_cols() {
+        let matrix = Matrix::<u8>::new_zeros(100, 110);
+
+        let mut count = 0;
+        matrix.iter_cols().for_each(|_| count += 1);
+
+        assert_eq!(110, count);
+    }
+
+    #[test]
+    fn enumerate_over_elements_mut() {
+        let mut matrix = Matrix::<u8>::new_zeros(256, 347);
+        let mut count = 0;
+        matrix.enumerate_element_mut().for_each(|((row, col), _)| {
+            assert!(row < 256);
+            assert!(col < 347);
+            count += 1;
+        });
+
+        assert_eq!(count, 256 * 347);
     }
 }

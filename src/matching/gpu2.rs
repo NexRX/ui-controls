@@ -1,10 +1,8 @@
 // All rights to https://www.reddit.com/r/rust/comments/14yti5s/opencl_kernel_for_template_matching/. Here temporarily for benchmarking against a future self written impl
 
-use ocl::enums::{
-    ImageChannelDataType, ImageChannelOrder, MemObjectType,
-};
-use ocl::{Context, Device, Image, Kernel, Program, Queue, Buffer};
 use image::GrayImage;
+use ocl::enums::{ImageChannelDataType, ImageChannelOrder, MemObjectType};
+use ocl::{Buffer, Context, Device, Image, Kernel, Program, Queue};
 use std::error::Error;
 use std::vec;
 
@@ -43,17 +41,18 @@ static KERNEL_SRC: &str = r#"
     }
 "#;
 
-
 /// Match a template against the original
-pub fn match_template(original: &GrayImage, template: &GrayImage) -> Result<(usize, usize), Box<dyn Error>> {
+pub fn match_template(
+    original: &GrayImage,
+    template: &GrayImage,
+) -> Result<(usize, usize), Box<dyn Error>> {
     let dims_orig = original.dimensions();
     let dims_templ = template.dimensions();
 
     let buffer_size = (dims_orig.0 - dims_templ.0) * (dims_orig.1 - dims_templ.1);
     // In the kernel all u8 values are casted to a float from 0.0 - 1.0 --> max diff per pixel = 1.0
     // -> max sq_diff = 1² * n_rows_template * n_cols_template
-    let mut vec_buffer = vec![(dims_templ.0*dims_templ.1) as f32; buffer_size as usize];
-
+    let mut vec_buffer = vec![(dims_templ.0 * dims_templ.1) as f32; buffer_size as usize];
 
     // Build context and get device
     let context = Context::builder()
@@ -103,9 +102,13 @@ pub fn match_template(original: &GrayImage, template: &GrayImage) -> Result<(usi
         .program(&program)
         .name("matchTemplate_SQDIFF")
         .queue(queue.clone())
-        .global_work_size((&dims_orig.0-&dims_templ.0, &dims_orig.1-&dims_templ.1))
-        .arg(&orig_image).arg(dims_orig.0 as i32).arg(dims_orig.1 as i32)
-        .arg(&templ_image).arg(dims_templ.0 as i32).arg(dims_templ.1 as i32)
+        .global_work_size((&dims_orig.0 - &dims_templ.0, &dims_orig.1 - &dims_templ.1))
+        .arg(&orig_image)
+        .arg(dims_orig.0 as i32)
+        .arg(dims_orig.1 as i32)
+        .arg(&templ_image)
+        .arg(dims_templ.0 as i32)
+        .arg(dims_templ.1 as i32)
         .arg(&buffer)
         .build()?;
 
@@ -114,21 +117,21 @@ pub fn match_template(original: &GrayImage, template: &GrayImage) -> Result<(usi
     }
 
     // Read the data of sq_diff into the vector
-    buffer.read(&mut vec_buffer)
-        .enq()?;
+    buffer.read(&mut vec_buffer).enq()?;
 
-    let mut vec_buffer = vec_buffer.into_iter().enumerate().collect::<Vec<(usize, f32)>>();
+    let mut vec_buffer = vec_buffer
+        .into_iter()
+        .enumerate()
+        .collect::<Vec<(usize, f32)>>();
     vec_buffer.sort_by(|a, b| a.1.total_cmp(&b.1));
 
     let min = vec_buffer.first().ok_or_else(|| "Failed sorting")?;
     let (min_id, min_sq_diff) = (min.0, min.1);
 
     let elems_per_row = dims_orig.0 - dims_templ.0 + 1;
-  
-    
-    let row_number = min_id/elems_per_row as usize;
-    let col_offset = min_id%elems_per_row as usize;
+
+    let row_number = min_id / elems_per_row as usize;
+    let col_offset = min_id % elems_per_row as usize;
 
     Ok((col_offset, row_number))
-
 }

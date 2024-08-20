@@ -26,6 +26,7 @@ fn fft2d(mut image: MatrixImageC) -> MatrixImageC {
 
     // Transpose the image for column FFTs (rows/height and cols/width are flipped for easier and better processing)
     let mut transposed_image: MatrixImageC = Matrix::new_zeros(width, height);
+    assert_eq!(image.dims(), (transposed_image.cols(), transposed_image.rows()));
 
     // Transpose the image so that columns become rows
     transposed_image
@@ -56,10 +57,10 @@ fn fft2d(mut image: MatrixImageC) -> MatrixImageC {
     let (mut image, transposed_image) = rayon::join(fn_row, fn_col);
 
     // Transpose back to the original layout
-    image.par_enumerate_rows_mut().for_each(|(i, row)| {
-        for (col, val) in row.iter_mut().enumerate() {
-            *val = transposed_image[(col, i)];
-        }
+    image.par_enumerate_element_mut().for_each(|((row, col), val)| {
+            assert!(row < transposed_image.cols(), "Expected {row} to be less than {}", transposed_image.rows());
+            assert!(col < transposed_image.rows(), "Expected {col} to be less than {}", transposed_image.rows());
+            *val = transposed_image[(col, row)];
     });
 
     image

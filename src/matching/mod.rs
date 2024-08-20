@@ -2,8 +2,8 @@
 pub mod cpu;
 #[cfg(feature = "gpu")]
 pub mod gpu;
-// #[cfg(feature = "gpu")]
-// pub mod gpu2;
+#[cfg(feature = "gpu")]
+pub mod gpu2;
 #[cfg(feature = "opencv")]
 pub mod opencv;
 

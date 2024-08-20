@@ -33,15 +33,21 @@ pub fn bench_template_match_with_gpu(c: &mut Criterion) {
 }
 
 #[cfg(feature = "gpu")]
-pub fn bench_template_match_with_gpu_accelerated(c: &mut Criterion) {
+pub async fn bench_template_match_with_gpu_accelerated(c: &mut Criterion) {
+    use gpu::GPUTemplateMatcher;
+    use ui_controls::types::matrix::MatrixImage32;
+
     let mut group = c.benchmark_group("Template Match (GPU Accelerated) ");
     for (source, templ) in IMAGE_PATHS.into_iter() {
         let name = format!("Source: '{source}' & Template: '{templ}'");
-        let source = image::open(source).unwrap();
-        let template = image::open(templ).unwrap();
+        let source = MatrixImage32::open_image("__fixtures__/screen-2k.png").unwrap();
+        let kernel = MatrixImage32::open_image("__fixtures__/btn.png").unwrap();
+
+        // let (device, queue) = GPUInit::init_gpu(wgpu::PowerPreference::HighPerformance, None).await;
+        let mut gpu = GPUTemplateMatcher::new_defaults().await;
 
         group.bench_function(&name, |b| {
-            b.iter(|| gpu::accelerated_template_matching(&source, &template))
+            b.iter(|| gpu.execute_shader(&source, &kernel))
         });
     }
     group.finish();
